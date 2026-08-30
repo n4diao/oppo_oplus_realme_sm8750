@@ -1,0 +1,87 @@
+--- a/kernel/supercall/supercall.c
++++ b/kernel/supercall/supercall.c
+@@ -18,6 +18,12 @@
+ #include "util.h"
+ #include "klog.h" // IWYU pragma: keep
+ 
++#ifdef CONFIG_KSU_SUSFS
++#include <linux/cred.h>		/* current_uid() */
++#include <linux/susfs.h>		/* SUSFS_MAGIC */
++#include "susfs_bridge.h"	/* ksu_susfs_dispatch() */
++#endif
++
+ struct ksu_install_fd_tw {
+     struct callback_head cb;
+     int __user *outp;
+@@ -84,20 +90,34 @@
+     int magic1 = (int)PT_REGS_PARM1(real_regs);
+     int magic2 = (int)PT_REGS_PARM2(real_regs);
+ 
+-    if (magic1 == KSU_INSTALL_MAGIC1 && magic2 == KSU_INSTALL_MAGIC2) {
+-        struct ksu_install_fd_tw *tw;
+-        unsigned long arg4 = (unsigned long)PT_REGS_SYSCALL_PARM4(real_regs);
+-
+-        tw = kzalloc(sizeof(*tw), GFP_ATOMIC);
+-        if (!tw)
++    if (magic1 == KSU_INSTALL_MAGIC1) {
++#ifdef CONFIG_KSU_SUSFS
++        /* SUSFS_MAGIC branch: dispatch SUSFS commands via task_work.
++         * The pre-handler is atomic; ksu_susfs_dispatch() only schedules
++         * a TWA_RESUME callback that runs the upstream susfs_*() helpers
++         * in task context before returning to userspace. */
++        if (magic2 == SUSFS_MAGIC && current_uid().val == 0) {
++            unsigned int cmd = (unsigned int)PT_REGS_PARM3(real_regs);
++            void __user *arg = (void __user *)PT_REGS_SYSCALL_PARM4(real_regs);
++            ksu_susfs_dispatch(cmd, arg);
+             return 0;
+-
+-        tw->outp = (int __user *)arg4;
+-        tw->cb.func = ksu_install_fd_tw_func;
+-
+-        if (task_work_add(current, &tw->cb, TWA_RESUME)) {
+-            kfree(tw);
+-            pr_warn("install fd add task_work failed\n");
++        }
++#endif
++        if (magic2 == KSU_INSTALL_MAGIC2) {
++            struct ksu_install_fd_tw *tw;
++            unsigned long arg4 = (unsigned long)PT_REGS_SYSCALL_PARM4(real_regs);
++
++            tw = kzalloc(sizeof(*tw), GFP_ATOMIC);
++            if (!tw)
++                return 0;
++
++            tw->outp = (int __user *)arg4;
++            tw->cb.func = ksu_install_fd_tw_func;
++
++            if (task_work_add(current, &tw->cb, TWA_RESUME)) {
++                kfree(tw);
++                pr_warn("install fd add task_work failed\n");
++            }
+         }
+     }
+ 
+
+--- a/kernel/supercall/dispatch.c
++++ b/kernel/supercall/dispatch.c
+@@ -25,6 +25,10 @@
+ #include "feature/uts_spoof.h"
+ #include "feature/cpu_spoof.h"
+ 
++#ifdef CONFIG_KSU_SUSFS
++#include <linux/susfs.h>		/* susfs_start_sdcard_monitor_fn() */
++#endif
++
+ #ifdef CONFIG_KPM
+ #include "kpm/kpm.h"
+ #endif
+@@ -130,6 +134,9 @@
+             } else {
+                 pr_info("boot_complete triggered\n");
+                 on_boot_completed();
++#ifdef CONFIG_KSU_SUSFS
++                susfs_start_sdcard_monitor_fn();
++#endif
+             }
+         }
+         break;

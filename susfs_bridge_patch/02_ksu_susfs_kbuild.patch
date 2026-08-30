@@ -1,0 +1,52 @@
+--- a/kernel/Kbuild
++++ b/kernel/Kbuild
+@@ -47,6 +47,12 @@
+ kernelsu-objs += supercall/perm.o
+ kernelsu-objs += supercall/supercall.o
+ 
++# SUSFS bridge: dispatch SUSFS_MAGIC reboot commands via task_work
++# (only when SUSFS is enabled; the bridge calls upstream susfs_* helpers)
++ifeq ($(CONFIG_KSU_SUSFS),y)
++kernelsu-objs += supercall/susfs_bridge.o
++endif
++
+ kernelsu-objs += feature/adb_root.o
+ 
+ kernelsu-objs += feature/selinux_hide.o
+@@ -68,6 +74,36 @@
+ ifeq ($(CONFIG_KSU_X86_PATCH_SYSCALL_DISPATCHER),y)
+ ccflags-y += -DCONFIG_KSU_X86_PATCH_SYSCALL_DISPATCHER=1
+ endif
++ifeq ($(CONFIG_KSU_SUSFS),y)
++ccflags-y += -DCONFIG_KSU_SUSFS=1
++ifeq ($(CONFIG_KSU_SUSFS_SUS_PATH),y)
++ccflags-y += -DCONFIG_KSU_SUSFS_SUS_PATH=1
++endif
++ifeq ($(CONFIG_KSU_SUSFS_SUS_MOUNT),y)
++ccflags-y += -DCONFIG_KSU_SUSFS_SUS_MOUNT=1
++endif
++ifeq ($(CONFIG_KSU_SUSFS_SUS_KSTAT),y)
++ccflags-y += -DCONFIG_KSU_SUSFS_SUS_KSTAT=1
++endif
++ifeq ($(CONFIG_KSU_SUSFS_SPOOF_UNAME),y)
++ccflags-y += -DCONFIG_KSU_SUSFS_SPOOF_UNAME=1
++endif
++ifeq ($(CONFIG_KSU_SUSFS_ENABLE_LOG),y)
++ccflags-y += -DCONFIG_KSU_SUSFS_ENABLE_LOG=1
++endif
++ifeq ($(CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS),y)
++ccflags-y += -DCONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=1
++endif
++ifeq ($(CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG),y)
++ccflags-y += -DCONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=1
++endif
++ifeq ($(CONFIG_KSU_SUSFS_OPEN_REDIRECT),y)
++ccflags-y += -DCONFIG_KSU_SUSFS_OPEN_REDIRECT=1
++endif
++ifeq ($(CONFIG_KSU_SUSFS_SUS_MAP),y)
++ccflags-y += -DCONFIG_KSU_SUSFS_SUS_MAP=1
++endif
++endif
+ endif
+ 
+ obj-$(CONFIG_KPM) += kpm/compact.o

@@ -1,0 +1,168 @@
+diff --git a/kernel/supercall/susfs_bridge.h b/kernel/supercall/susfs_bridge.h
+new file mode 100644
+@@ -0,0 +1,25 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef __KSU_SUSFS_BRIDGE_H
++#define __KSU_SUSFS_BRIDGE_H
++
++#include <linux/types.h>
++#include <linux/uaccess.h>	/* __user */
++
++#ifdef CONFIG_KSU_SUSFS
++/*
++ * Bridge entry invoked from the reboot kprobe pre-handler (atomic context).
++ *
++ * main hooks __arm64_sys_reboot via kprobe; the pre-handler runs with
++ * preemption (and possibly irqs) disabled, so it must NOT call sleepable
++ * upstream susfs_*() helpers directly (they use copy_from_user/kern_path/
++ * mutex). This function only captures (cmd, arg) and schedules a task_work
++ * callback (TWA_RESUME) that fires on the exit-to-usermode path, in normal
++ * task context, BEFORE userspace observes the syscall return value -- so
++ * the susfs_*() copy_to_user() writebacks are race-free.
++ *
++ * Returns 0 on dispatch scheduled, negative errno otherwise.
++ */
++int ksu_susfs_dispatch(unsigned int cmd, void __user *arg);
++#endif /* CONFIG_KSU_SUSFS */
++
++#endif /* __KSU_SUSFS_BRIDGE_H */
+
+diff --git a/kernel/supercall/susfs_bridge.c b/kernel/supercall/susfs_bridge.c
+new file mode 100644
+@@ -0,0 +1,136 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * SukiSU main <-> SUSFS bridge.
++ *
++ * main hooks reboot via a kprobe pre-handler (atomic context).  The upstream
++ * SUSFS helpers (susfs_add_sus_path(), etc.) need sleepable context because
++ * they use copy_from_user()/kern_path()/mutex.  We bridge the two by deferring
++ * to task_work (TWA_RESUME): the pre-handler only captures (cmd, arg) and
++ * schedules a callback that runs on the exit-to-usermode path, in normal task
++ * context, BEFORE userspace observes the syscall return value.  Therefore the
++ * susfs_*() copy_to_user() writebacks (incl. the "show" commands) are
++ * race-free.
++ *
++ * The 15-case switch mirrors builtin/ dispatch.c semantics verbatim; only the
++ * invocation context is wrapped in task_work.
++ */
++
++#include <linux/kernel.h>
++#include <linux/slab.h>
++#include <linux/printk.h>
++#include <linux/sched.h>
++#include <linux/task_work.h>
++#include <linux/uaccess.h>
++#include <linux/cred.h>
++#include <linux/susfs.h>		/* SUSFS_MAGIC, CMD_SUSFS_*, susfs_*() */
++#include "uapi/supercall.h"	/* KSU_INSTALL_MAGIC1 */
++
++#ifdef CONFIG_KSU_SUSFS
++struct ksu_susfs_tw {
++	struct callback_head cb;
++	unsigned int cmd;
++	void __user *arg;
++};
++
++static void ksu_susfs_tw_func(struct callback_head *cb)
++{
++	struct ksu_susfs_tw *tw = container_of(cb, struct ksu_susfs_tw, cb);
++	/*
++	 * The upstream susfs_*() helpers take `void __user **user_info` and
++	 * deref it to obtain the user struct pointer.  Pass a kernel stack
++	 * slot holding the user pointer captured from reboot syscall PARM4.
++	 */
++	void __user *arg = tw->arg;
++
++	switch (tw->cmd) {
++#ifdef CONFIG_KSU_SUSFS_SUS_PATH
++	case CMD_SUSFS_ADD_SUS_PATH:
++		susfs_add_sus_path(&arg);
++		break;
++	case CMD_SUSFS_ADD_SUS_PATH_LOOP:
++		susfs_add_sus_path_loop(&arg);
++		break;
++#endif
++#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
++	case CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS:
++		susfs_set_hide_sus_mnts_for_non_su_procs(&arg);
++		break;
++#endif
++#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
++	case CMD_SUSFS_ADD_SUS_KSTAT:
++		susfs_add_sus_kstat(&arg);
++		break;
++	case CMD_SUSFS_UPDATE_SUS_KSTAT:
++		susfs_update_sus_kstat(&arg);
++		break;
++	case CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY:
++		susfs_add_sus_kstat(&arg);
++		break;
++#endif
++#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
++	case CMD_SUSFS_SET_UNAME:
++		susfs_set_uname(&arg);
++		break;
++#endif
++#ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
++	case CMD_SUSFS_ENABLE_LOG:
++		susfs_enable_log(&arg);
++		break;
++#endif
++#ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
++	case CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG:
++		susfs_set_cmdline_or_bootconfig(&arg);
++		break;
++#endif
++#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
++	case CMD_SUSFS_ADD_OPEN_REDIRECT:
++		susfs_add_open_redirect(&arg);
++		break;
++#endif
++#ifdef CONFIG_KSU_SUSFS_SUS_MAP
++	case CMD_SUSFS_ADD_SUS_MAP:
++		susfs_add_sus_map(&arg);
++		break;
++#endif
++	/* The following four are unconditionally compiled in upstream susfs.c */
++	case CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING:
++		susfs_set_avc_log_spoofing(&arg);
++		break;
++	case CMD_SUSFS_SHOW_ENABLED_FEATURES:
++		susfs_get_enabled_features(&arg);
++		break;
++	case CMD_SUSFS_SHOW_VARIANT:
++		susfs_show_variant(&arg);
++		break;
++	case CMD_SUSFS_SHOW_VERSION:
++		susfs_show_version(&arg);
++		break;
++	default:
++		pr_warn("ksu_susfs: unknown cmd 0x%x\n", tw->cmd);
++		break;
++	}
++
++	kfree(tw);
++}
++
++int ksu_susfs_dispatch(unsigned int cmd, void __user *arg)
++{
++	struct ksu_susfs_tw *tw;
++
++	tw = kzalloc(sizeof(*tw), GFP_ATOMIC);
++	if (!tw)
++		return -ENOMEM;
++
++	tw->cmd = cmd;
++	tw->arg = arg;
++	tw->cb.func = ksu_susfs_tw_func;
++
++	if (task_work_add(current, &tw->cb, TWA_RESUME)) {
++		kfree(tw);
++		pr_warn("ksu_susfs: task_work_add failed for cmd 0x%x\n", cmd);
++		return -EAGAIN;
++	}
++
++	return 0;
++}
++#endif /* CONFIG_KSU_SUSFS */
