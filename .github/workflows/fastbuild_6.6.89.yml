@@ -655,6 +655,44 @@ jobs:
           echo "编译后空间:"
           df -h
 
+      - name: 硬性验证 SUSFS 关键 CONFIG 已编入最终 .config
+        if: ${{ inputs.susfs_enable && github.event.inputs.ksu_type != 'none' }}
+        working-directory: kernel_workspace/common
+        run: |
+          set -eu
+          CONFIG=out/.config
+          if [[ ! -s "$CONFIG" ]]; then
+            echo "::error::最终 .config 不存在或为空: $CONFIG"
+            exit 1
+          fi
+          echo "===== 校验最终 .config ====="
+          fail=0
+          # 必须以 =y 编入的 SUSFS 关键项；任一缺失则视为 SUSFS 未真正生效
+          for sym in \
+            CONFIG_KSU_SUSFS \
+            CONFIG_KSU_SUSFS_SPOOF_UNAME \
+            CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            CONFIG_KSU_SUSFS_SUS_PATH \
+            CONFIG_KSU_SUSFS_SUS_MOUNT \
+            CONFIG_KSU_SUSFS_SUS_KSTAT \
+            CONFIG_KSU_SUSFS_OPEN_REDIRECT \
+            CONFIG_KSU_SUSFS_SUS_MAP ; do
+            line=$(grep -E "^${sym}=" "$CONFIG" || true)
+            if [[ "$line" != "${sym}=y" ]]; then
+              echo "::error::${sym} 未以 =y 编入最终 .config（实际值: '${line:-未找到}'）"
+              echo "::error::   → SUSFS patch 可能未完整应用，或 Kconfig 依赖未满足"
+              fail=1
+            else
+              echo "✓ ${sym} = y"
+            fi
+          done
+          if [[ $fail -ne 0 ]]; then
+            echo "::error::SUSFS 关键功能未全部编入内核，构建失败以避免刷入后 ksu_susfs set_uname 报 operation not supported"
+            echo "::error::请检查 patch 应用日志（特别是 50_add_susfs_in_gki-*.patch 的 hunks 是否被拒绝）"
+            exit 1
+          fi
+          echo "✅ 所有 SUSFS 关键 CONFIG 项已编入最终 .config（含 SPOOF_UNAME），可保证刷入后 set_uname 可用"
+
       - name: 保存新的 ccache 缓存
         if: inputs.ccache_update || steps.ccache-restore.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5

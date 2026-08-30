@@ -385,6 +385,41 @@ cd common
 make -j$(nproc --all) LLVM=-18 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnuabeihf- CC=clang LD=ld.lld HOSTCC=clang HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error gki_defconfig all
 echo ">>> 内核编译成功！"
 
+# ===== 硬性验证 SUSFS 关键 CONFIG 已编入最终 .config =====
+if [[ "$APPLY_SUSFS" == [yY] ]]; then
+  CONFIG=out/.config
+  if [[ ! -s "$CONFIG" ]]; then
+    echo ">>> [错误] 最终 .config 不存在或为空: $CONFIG"
+    exit 1
+  fi
+  echo ">>> 校验最终 .config 中 SUSFS 关键项..."
+  fail=0
+  for sym in \
+    CONFIG_KSU_SUSFS \
+    CONFIG_KSU_SUSFS_SPOOF_UNAME \
+    CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+    CONFIG_KSU_SUSFS_SUS_PATH \
+    CONFIG_KSU_SUSFS_SUS_MOUNT \
+    CONFIG_KSU_SUSFS_SUS_KSTAT \
+    CONFIG_KSU_SUSFS_OPEN_REDIRECT \
+    CONFIG_KSU_SUSFS_SUS_MAP ; do
+    line=$(grep -E "^${sym}=" "$CONFIG" || true)
+    if [[ "$line" != "${sym}=y" ]]; then
+      echo ">>> [错误] ${sym} 未以 =y 编入最终 .config（实际值: '${line:-未找到}'）"
+      echo ">>>        → SUSFS patch 可能未完整应用，或 Kconfig 依赖未满足"
+      fail=1
+    else
+      echo ">>> ✓ ${sym} = y"
+    fi
+  done
+  if [[ $fail -ne 0 ]]; then
+    echo ">>> [错误] SUSFS 关键功能未全部编入内核，构建失败以避免刷入后 set_uname 报 operation not supported"
+    echo ">>>        请检查 patch 应用日志（特别是 50_add_susfs_in_gki-*.patch 的 hunks 是否被拒绝）"
+    exit 1
+  fi
+  echo ">>> ✓ 所有 SUSFS 关键 CONFIG 项已编入最终 .config（含 SPOOF_UNAME）"
+fi
+
 # ===== 选择使用 patch_linux (KPM补丁)=====
 OUT_DIR="$WORKDIR/kernel_workspace/common/out/arch/arm64/boot"
 if [[ "$USE_PATCH_LINUX" == [yY] ]]; then
