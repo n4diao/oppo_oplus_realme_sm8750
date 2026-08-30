@@ -165,9 +165,23 @@ else
 fi
 cd "$WORKDIR/kernel_workspace"
 if [[ "$KSU_BRANCH" == [kK] && "$APPLY_SUSFS" == [yY] ]]; then
+  # 原版 KernelSU (tiann/KernelSU): 应用官方 10_enable_susfs_for_ksu.patch
   cp ./susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU/
   cd ./KernelSU
   patch -p1 < 10_enable_susfs_for_ksu.patch || true
+  cd "$WORKDIR/kernel_workspace"
+elif [[ ( "$KSU_BRANCH" == [yY] || "$KSU_BRANCH" == [rR] ) && "$APPLY_SUSFS" == [yY] ]]; then
+  # SukiSU-Ultra / ReSukiSU (main 分支): 应用 4 块 SUSFS bridge patch
+  # main 分支为 Kprobe/LKM 架构, 与 builtin 的 Unity build 架构不同,
+  # 需通过 task_work 桥接 SUSFS 命令到 reboot kprobe 处理器
+  echo ">>> 应用 SUSFS bridge patch (SukiSU main 架构)..."
+  cp "$SCRIPT_DIR/../susfs_bridge_patch/"*.patch ./KernelSU/
+  cd ./KernelSU
+  patch -p1 < 01_ksu_susfs_kconfig.patch || true
+  patch -p1 < 02_ksu_susfs_kbuild.patch || true
+  patch -p1 < 03_ksu_susfs_bridge_files.patch || true
+  patch -p1 < 04_ksu_susfs_reboot_hook.patch || true
+  cd "$WORKDIR/kernel_workspace"
 fi
 cd "$WORKDIR/kernel_workspace"
 

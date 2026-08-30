@@ -321,6 +321,17 @@ jobs:
             cp ./susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU/
             cd ./KernelSU
             patch -p1 < 10_enable_susfs_for_ksu.patch || true
+          elif [[ ${{ github.event.inputs.ksu_type }} == "sukisu" || ${{ github.event.inputs.ksu_type }} == "resukisu" ]]; then
+            echo "正在为 SukiSU-Ultra / ReSukiSU (main 分支)添加 SUSFS bridge 补丁..."
+            wget -q https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/susfs_bridge_patch/01_ksu_susfs_kconfig.patch -O ./KernelSU/01_ksu_susfs_kconfig.patch
+            wget -q https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/susfs_bridge_patch/02_ksu_susfs_kbuild.patch -O ./KernelSU/02_ksu_susfs_kbuild.patch
+            wget -q https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/susfs_bridge_patch/03_ksu_susfs_bridge_files.patch -O ./KernelSU/03_ksu_susfs_bridge_files.patch
+            wget -q https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/susfs_bridge_patch/04_ksu_susfs_reboot_hook.patch -O ./KernelSU/04_ksu_susfs_reboot_hook.patch
+            cd ./KernelSU
+            patch -p1 < 01_ksu_susfs_kconfig.patch || true
+            patch -p1 < 02_ksu_susfs_kbuild.patch || true
+            patch -p1 < 03_ksu_susfs_bridge_files.patch || true
+            patch -p1 < 04_ksu_susfs_reboot_hook.patch || true
           fi
           
       - name: 应用lz4 1.10.0 & zstd 1.5.7补丁
