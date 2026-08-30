@@ -113,12 +113,14 @@ sed -i 's/${scm_version}//' ./common/scripts/setlocalversion
 echo "CONFIG_LOCALVERSION_AUTO=n" >> ./common/arch/arm64/configs/gki_defconfig
 
 # ===== 拉取 KSU 并设置版本号 =====
-if [[ "$KSU_BRANCH" == "y" || "$KSU_BRANCH" == "Y" ]]; then
-  echo ">>> 拉取 SukiSU-Ultra (main 最新分支，含 vvar/CPU 身份伪装)..."
-  curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
-  echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@SukiSU-Ultra"' >> ./common/arch/arm64/configs/gki_defconfig
-elif [[ "$KSU_BRANCH" == "r" || "$KSU_BRANCH" == "R" ]]; then
-  echo ">>> 拉取 ReSukiSU..."
+# SukiSU-Ultra main 已将 susfs 桥接符号（ksu_handle_sys_reboot / fake_status /
+# ksu_selinux_hide_* / susfs_ksu_sid / security_*_with_policy 等）改为 static 或移除，
+# 而 susfs4oki 的 50_add_susfs_in_gki 仍以 extern 引用 → 链接报 undefined symbol。
+# ReSukiSU（每日维护）用 __maybe_static 宏在开启 SUSFS 时将这些符号暴露为全局非静态，
+# 与 oki 分支 SUSFS 完全兼容，且兼容 sukisu 管理器。故 y(SukiSU Ultra)/r(ReSukiSU) 均重定向到 ReSukiSU，
+# 与 6.6.89_mtk 及其他 6.6.x workflow 对齐。
+if [[ "$KSU_BRANCH" == "y" || "$KSU_BRANCH" == "Y" || "$KSU_BRANCH" == "r" || "$KSU_BRANCH" == "R" ]]; then
+  echo ">>> 拉取 ReSukiSU（SukiSU-Ultra main 已破坏 susfs 桥接符号，重定向至 ReSukiSU）..."
   curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s main
   echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@cctv18"' >> ./common/arch/arm64/configs/gki_defconfig
 elif [[ "$KSU_BRANCH" == "n" || "$KSU_BRANCH" == "N" ]]; then
