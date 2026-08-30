@@ -29,7 +29,7 @@ new file mode 100644
 
 diff --git a/kernel/supercall/susfs_bridge.c b/kernel/supercall/susfs_bridge.c
 new file mode 100644
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,135 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * SukiSU main <-> SUSFS bridge.
@@ -55,7 +55,6 @@ new file mode 100644
 +#include <linux/uaccess.h>
 +#include <linux/cred.h>
 +#include <linux/susfs.h>		/* SUSFS_MAGIC, CMD_SUSFS_*, susfs_*() */
-+#include "uapi/supercall.h"	/* KSU_INSTALL_MAGIC1 */
 +
 +#ifdef CONFIG_KSU_SUSFS
 +struct ksu_susfs_tw {
