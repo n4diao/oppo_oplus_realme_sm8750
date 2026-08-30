@@ -261,8 +261,13 @@ jobs:
             curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/refs/heads/main/kernel/setup.sh" | bash -s main
             echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@cctv18"' >> ./common/arch/arm64/configs/gki_defconfig
             cd ./KernelSU
-            # 生成自定义版本号（基于提交计数）, 失败时使用 114514
-            KSU_VERSION=$(expr $(git rev-list --count main) + 30700 2>/dev/null || echo 114514)
+            # 对齐 SukiSU-Ultra 版本号体系，避免 ReSukiSU 的 30000+count+700 公式显示过低
+            # （35108 vs SukiSU-Ultra 的 40895）。改用 SukiSU-Ultra 公式 40000+count-2815 后，
+            # ReSukiSU 因提交数更多会得到 ~41593（略高于 SukiSU-Ultra 40895），符合"每日维护
+            # fork"的实际状态。KSU_VERSION 仅用于显示，不影响功能。
+            sed -i 's|expr 30000 + $(KSU_LOCAL_VERSION) + 700|expr 40000 + $(KSU_LOCAL_VERSION) - 2815|' kernel/Kbuild
+            # 生成自定义版本号（基于提交计数，对齐 SukiSU-Ultra 公式）, 失败时使用 114514
+            KSU_VERSION=$(expr 40000 + $(git rev-list --count main) - 2815 2>/dev/null || echo 114514)
             # 存储版本号到 GitHub 环境变量
             echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
             echo "ksuver=$KSU_VERSION" >> $GITHUB_OUTPUT
@@ -370,15 +375,15 @@ jobs:
         if: inputs.susfs_enable
         run: |
           cd kernel_workspace
+          # 只写 ReSukiSU Kconfig 实际支持的 10 项 SUSFS CONFIG（完整核心隐藏功能）。
+          # 已删除 5 项无效死代码：HAS_MAGIC_MOUNT / TRY_UMOUNT / AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
+          # / AUTO_ADD_SUS_BIND_MOUNT / AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT——这些 CONFIG 在 oki
+          # 分支补丁、gki 分支补丁、bridge 补丁 01、ReSukiSU Kconfig 中均无声明无代码实现，
+          # 写进 defconfig 会被 kconfig 自动丢弃，反而造成"功能不全"的误解。
           echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -683,6 +688,7 @@ jobs:
           echo "===== 校验最终 .config ====="
           fail=0
           # 必须以 =y 编入的 SUSFS 关键项；任一缺失则视为 SUSFS 未真正生效
+          # 对齐 ReSukiSU Kconfig 实际支持的 10 项（已剔除 5 项无效死代码 CONFIG）
           for sym in \
             CONFIG_KSU_SUSFS \
             CONFIG_KSU_SUSFS_SPOOF_UNAME \
@@ -691,7 +697,9 @@ jobs:
             CONFIG_KSU_SUSFS_SUS_MOUNT \
             CONFIG_KSU_SUSFS_SUS_KSTAT \
             CONFIG_KSU_SUSFS_OPEN_REDIRECT \
-            CONFIG_KSU_SUSFS_SUS_MAP ; do
+            CONFIG_KSU_SUSFS_SUS_MAP \
+            CONFIG_KSU_SUSFS_ENABLE_LOG \
+            CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS ; do
             line=$(grep -E "^${sym}=" "$CONFIG" || true)
             if [[ "$line" != "${sym}=y" ]]; then
               echo "::error::${sym} 未以 =y 编入最终 .config（实际值: '${line:-未找到}'）"
