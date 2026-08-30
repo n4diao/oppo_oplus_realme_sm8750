@@ -174,17 +174,15 @@ if [[ "$KSU_BRANCH" == [kK] && "$APPLY_SUSFS" == [yY] ]]; then
   patch -p1 < 10_enable_susfs_for_ksu.patch || true
   cd "$WORKDIR/kernel_workspace"
 elif [[ ( "$KSU_BRANCH" == [yY] || "$KSU_BRANCH" == [rR] ) && "$APPLY_SUSFS" == [yY] ]]; then
-  # SukiSU-Ultra / ReSukiSU (main 分支): 应用 4 块 SUSFS bridge patch
-  # main 分支为 Kprobe/LKM 架构, 与 builtin 的 Unity build 架构不同,
-  # 需通过 task_work 桥接 SUSFS 命令到 reboot kprobe 处理器
-  echo ">>> 应用 SUSFS bridge patch (SukiSU main 架构)..."
-  cp "$SCRIPT_DIR/../susfs_bridge_patch/"*.patch ./KernelSU/
-  cd ./KernelSU
-  patch -p1 < 01_ksu_susfs_kconfig.patch || true
-  patch -p1 < 02_ksu_susfs_kbuild.patch || true
-  patch -p1 < 03_ksu_susfs_bridge_files.patch || true
-  patch -p1 < 04_ksu_susfs_reboot_hook.patch || true
-  cd "$WORKDIR/kernel_workspace"
+  # ReSukiSU 已原生集成完整 SUSFS 支持，跳过 bridge 补丁：
+  #   - kernel/Kconfig 含 config KSU_SUSFS（在 "KernelSU Hooking Method" choice 内）+ 全部子配置
+  #   - kernel/supercall/supercall.c 含 ksu_handle_sys_reboot()，magic2==SUSFS_MAGIC 时路由到 dispatch
+  #   - kernel/supercall/dispatch.c 含 ksu_handle_susfs_cmd()，处理全部 CMD_SUSFS_* 命令
+  #   - kernel/feature/selinux_hide.c 用 __maybe_static 暴露 ksu_selinux_hide_running
+  #   - kernel/runtime/ksud_integration.c 定义 ksu_is_input_hook_enabled (static_key)
+  # bridge 补丁 01-04 专为缺失 SUSFS 的 SukiSU-Ultra main 设计，对 ReSukiSU 会造成
+  # Kconfig 递归依赖（01 重复定义 KSU_SUSFS）+ supercall 结构冲突（03 hunk FAILED）。
+  echo ">>> ReSukiSU 已原生集成 SUSFS，跳过 bridge 补丁 01-04..."
 fi
 cd "$WORKDIR/kernel_workspace"
 

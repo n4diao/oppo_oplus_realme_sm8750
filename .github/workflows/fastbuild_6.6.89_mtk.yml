@@ -311,16 +311,10 @@ jobs:
             cd ./KernelSU
             patch -p1 < 10_enable_susfs_for_ksu.patch || true
           elif [[ ${{ github.event.inputs.ksu_type }} == "sukisu" || ${{ github.event.inputs.ksu_type }} == "resukisu" ]]; then
-            echo "正在为 SukiSU-Ultra / ReSukiSU (main 分支)添加 SUSFS bridge 补丁..."
-            wget -q https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/susfs_bridge_patch/01_ksu_susfs_kconfig.patch -O ./KernelSU/01_ksu_susfs_kconfig.patch
-            wget -q https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/susfs_bridge_patch/02_ksu_susfs_kbuild.patch -O ./KernelSU/02_ksu_susfs_kbuild.patch
-            wget -q https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/susfs_bridge_patch/03_ksu_susfs_bridge_files.patch -O ./KernelSU/03_ksu_susfs_bridge_files.patch
-            wget -q https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/susfs_bridge_patch/04_ksu_susfs_reboot_hook.patch -O ./KernelSU/04_ksu_susfs_reboot_hook.patch
-            cd ./KernelSU
-            patch -p1 < 01_ksu_susfs_kconfig.patch || true
-            patch -p1 < 02_ksu_susfs_kbuild.patch || true
-            patch -p1 < 03_ksu_susfs_bridge_files.patch || true
-            patch -p1 < 04_ksu_susfs_reboot_hook.patch || true
+            # ReSukiSU 已原生集成完整 SUSFS 支持（Kconfig+supercall+dispatch+selinux_hide），
+            # bridge 补丁 01-04 专为 SukiSU-Ultra main 设计，对 ReSukiSU 会造成
+            # Kconfig 递归依赖（01 重复定义 KSU_SUSFS）+ supercall 结构冲突（03 hunk FAILED）。
+            echo "ReSukiSU 已原生集成 SUSFS，跳过 bridge 补丁 01-04..."
           fi
           
       - name: 应用lz4 1.10.0 & zstd 1.5.7补丁
@@ -639,7 +633,7 @@ jobs:
           sudo rm -rf /usr/local/lib/android &
           sudo rm -rf /opt/ghc &
           sudo rm -rf /opt/hostedtoolcache/CodeQL &
-          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error gki_defconfig &&
+          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error gki_defconfig
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="$(pwd)/cc-wrapper" LD="$(pwd)/ld-wrapper" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error Image
           
           # 编译后时间劫持二次校验

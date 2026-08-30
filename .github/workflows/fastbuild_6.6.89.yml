@@ -322,16 +322,20 @@ jobs:
             cd ./KernelSU
             patch -p1 < 10_enable_susfs_for_ksu.patch || true
           elif [[ ${{ github.event.inputs.ksu_type }} == "sukisu" || ${{ github.event.inputs.ksu_type }} == "resukisu" ]]; then
-            echo "正在为 SukiSU-Ultra / ReSukiSU (main 分支)添加 SUSFS bridge 补丁..."
-            wget -q https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/susfs_bridge_patch/01_ksu_susfs_kconfig.patch -O ./KernelSU/01_ksu_susfs_kconfig.patch
-            wget -q https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/susfs_bridge_patch/02_ksu_susfs_kbuild.patch -O ./KernelSU/02_ksu_susfs_kbuild.patch
-            wget -q https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/susfs_bridge_patch/03_ksu_susfs_bridge_files.patch -O ./KernelSU/03_ksu_susfs_bridge_files.patch
-            wget -q https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/susfs_bridge_patch/04_ksu_susfs_reboot_hook.patch -O ./KernelSU/04_ksu_susfs_reboot_hook.patch
-            cd ./KernelSU
-            patch -p1 < 01_ksu_susfs_kconfig.patch || true
-            patch -p1 < 02_ksu_susfs_kbuild.patch || true
-            patch -p1 < 03_ksu_susfs_bridge_files.patch || true
-            patch -p1 < 04_ksu_susfs_reboot_hook.patch || true
+            # ReSukiSU 已原生集成完整 SUSFS 支持，无需任何 bridge 补丁：
+            #   - kernel/Kconfig 含 config KSU_SUSFS（在 "KernelSU Hooking Method" choice 内）
+            #     及全部子配置（SUS_PATH/SUS_MOUNT/SUS_KSTAT/SPOOF_UNAME/OPEN_REDIRECT/SUS_MAP 等）
+            #   - kernel/supercall/supercall.c 含 ksu_handle_sys_reboot() 全局函数，
+            #     当 magic2 == SUSFS_MAGIC 时路由到 ksu_handle_susfs_cmd()
+            #   - kernel/supercall/dispatch.c 含 ksu_handle_susfs_cmd()，
+            #     处理全部 CMD_SUSFS_* 命令（ADD_SUS_PATH / SET_UNAME / ADD_SUS_KSTAT 等）
+            #   - kernel/feature/selinux_hide.c 用 __maybe_static 暴露 ksu_selinux_hide_running
+            #   - kernel/runtime/ksud_integration.c 定义 ksu_is_input_hook_enabled (static_key)
+            # bridge 补丁 01-04 是为缺失 SUSFS 的 SukiSU-Ultra main 设计的，对 ReSukiSU 会造成：
+            #   - 01 重复定义 KSU_SUSFS → Kconfig recursive dependency（choice 内已有）
+            #   - 03 修改 supercall.c/dispatch.c 失败（ReSukiSU 结构与补丁预期不同）
+            # 故对 sukisu/resukisu（均重定向到 ReSukiSU）跳过全部 bridge 补丁。
+            echo "ReSukiSU 已原生集成 SUSFS（Kconfig+supercall+dispatch+selinux_hide），跳过 bridge 补丁 01-04..."
           fi
           
       - name: 应用lz4 1.10.0 & zstd 1.5.7补丁
@@ -653,7 +657,7 @@ jobs:
           sudo rm -rf /usr/local/lib/android &
           sudo rm -rf /opt/ghc &
           sudo rm -rf /opt/hostedtoolcache/CodeQL &
-          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error gki_defconfig &&
+          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error gki_defconfig
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="$(pwd)/cc-wrapper" LD="$(pwd)/ld-wrapper" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error Image
           
           # 编译后时间劫持二次校验
