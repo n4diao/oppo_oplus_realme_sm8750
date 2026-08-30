@@ -149,10 +149,11 @@ cd "$WORKDIR/kernel_workspace"
 echo ">>> 应用 SUSFS&hook 补丁..."
 if [[ "$APPLY_SUSFS" == [yY] ]]; then
   echo ">>> 克隆补丁仓库..."
-  git clone https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu -b gki-android15-6.6
-  cd susfs4ksu
-  git pull --ff-only
-  cd ..
+  # 使用 cctv18/susfs4oki 的 oki 分支（OKI 适配版）。gitlab simonpunk 的 gki 分支已于
+  # 2026-08-30 bump 到 v2.3.0，其 fs/proc/base.c Hunk #1（#include <linux/susfs.h>，第 101 行）
+  # 不再匹配 OKI 6.6.89 的 base.c 上下文 → 宏未声明 → fs/proc/base.o 编译失败。
+  # oki 分支 Hunk #1 定位在第 103 行（OKI 适配），且冻结在稳定的 v2.2.0（含 zygote_next 修复）。
+  git clone --depth=1 https://github.com/cctv18/susfs4oki.git susfs4ksu -b oki-android15-6.6
   wget https://github.com/cctv18/oppo_oplus_realme_sm8650/raw/refs/heads/main/other_patch/69_hide_stuff.patch -O ./common/69_hide_stuff.patch
   cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch ./common/
   cp ./susfs4ksu/kernel_patches/fs/* ./common/fs/

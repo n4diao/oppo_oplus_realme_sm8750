@@ -301,10 +301,12 @@ jobs:
           cd kernel_workspace
           if [[ ${{ github.event.inputs.ksu_type }} != "none" ]]; then
             echo "正在添加susfs补丁..."
-            git clone https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
-            cd susfs4ksu
-            git pull --ff-only
-            cd ..
+            # 使用 cctv18/susfs4oki 的 oki 分支（OKI 适配版），与 6.6.89_mtk 及其他 6.6.x workflow 对齐。
+            # gitlab simonpunk 的 gki 分支已于 2026-08-30 bump 到 v2.3.0，其 fs/proc/base.c
+            # Hunk #1（#include <linux/susfs.h>，定位在第 101 行）不再匹配 OKI 6.6.89 的 base.c
+            # 上下文，导致宏未声明、fs/proc/base.o 编译失败。oki 分支的 Hunk #1 定位在第 103 行
+            # （针对 OKI 多出的 include 调整过），且冻结在稳定的 v2.2.0（含 zygote_next 漏洞修复）。
+            git clone --depth=1 https://github.com/cctv18/susfs4oki.git susfs4ksu -b oki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
             wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/other_patch/69_hide_stuff.patch -O ./common/69_hide_stuff.patch
             cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
             cp ./susfs4ksu/kernel_patches/fs/* ./common/fs/
