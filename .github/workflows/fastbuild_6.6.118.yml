@@ -251,7 +251,13 @@ jobs:
           # 进入内核工作目录
           cd kernel_workspace
           if [[ ${{ github.event.inputs.ksu_type }} == "sukisu" || ${{ github.event.inputs.ksu_type }} == "resukisu" ]]; then
-            echo "正在配置ReSukiSU（由于SukiSU长期未维护无法正常编译，且ReSukiSU兼容sukisu管理器，故SukiSU源码仓库已重定向为resukisu）..."
+            # SukiSU-Ultra main 已将 susfs 桥接符号（ksu_handle_sys_reboot / fake_status /
+            # ksu_selinux_hide_* / susfs_ksu_sid / security_*_with_policy 等）改为 static 或直接移除，
+            # 而 susfs4oki 的 50_add_susfs_in_gki 仍以 extern 引用这些符号 → 链接报 undefined symbol。
+            # ReSukiSU（每日维护）用 __maybe_static 宏在开启 SUSFS 时将这些符号暴露为全局非静态，
+            # 与 oki 分支 SUSFS 完全兼容，且兼容 sukisu 管理器。故 sukisu/resukisu 均重定向到 ReSukiSU，
+            # 与 6.6.89 workflow 对齐。
+            echo "正在配置ReSukiSU（SukiSU-Ultra main 已破坏 susfs 桥接符号，重定向至 ReSukiSU）..."
             curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/refs/heads/main/kernel/setup.sh" | bash -s main
             echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@cctv18"' >> ./common/arch/arm64/configs/gki_defconfig
             cd ./KernelSU
@@ -293,6 +299,11 @@ jobs:
           cd kernel_workspace
           if [[ ${{ github.event.inputs.ksu_type }} != "none" ]]; then
             echo "正在添加susfs补丁..."
+            # 使用 cctv18/susfs4oki 的 oki 分支（OKI 适配版），与 6.6.89 及其他 6.6.x workflow 对齐。
+            # gitlab simonpunk 的 gki 分支已于 2026-08-30 bump 到 v2.3.0，其 fs/proc/base.c
+            # Hunk #1（#include <linux/susfs.h>，定位在第 101 行）不再匹配 OKI 内核的 base.c
+            # 上下文，导致宏未声明、fs/proc/base.o 编译失败。oki 分支的 Hunk #1 定位在第 103 行
+            # （针对 OKI 多出的 include 调整过），且冻结在稳定的 v2.2.0（含 zygote_next 漏洞修复）。
             git clone --depth=1 https://github.com/cctv18/susfs4oki.git susfs4ksu -b oki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
             wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/other_patch/69_hide_stuff.patch -O ./common/69_hide_stuff.patch
             cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
@@ -311,16 +322,21 @@ jobs:
             cd ./KernelSU
             patch -p1 < 10_enable_susfs_for_ksu.patch || true
           elif [[ ${{ github.event.inputs.ksu_type }} == "sukisu" || ${{ github.event.inputs.ksu_type }} == "resukisu" ]]; then
-            echo "正在为 SukiSU-Ultra / ReSukiSU (main 分支)添加 SUSFS bridge 补丁..."
-            wget -q https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/susfs_bridge_patch/01_ksu_susfs_kconfig.patch -O ./KernelSU/01_ksu_susfs_kconfig.patch
-            wget -q https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/susfs_bridge_patch/02_ksu_susfs_kbuild.patch -O ./KernelSU/02_ksu_susfs_kbuild.patch
-            wget -q https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/susfs_bridge_patch/03_ksu_susfs_bridge_files.patch -O ./KernelSU/03_ksu_susfs_bridge_files.patch
-            wget -q https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/susfs_bridge_patch/04_ksu_susfs_reboot_hook.patch -O ./KernelSU/04_ksu_susfs_reboot_hook.patch
-            cd ./KernelSU
-            patch -p1 < 01_ksu_susfs_kconfig.patch || true
-            patch -p1 < 02_ksu_susfs_kbuild.patch || true
-            patch -p1 < 03_ksu_susfs_bridge_files.patch || true
-            patch -p1 < 04_ksu_susfs_reboot_hook.patch || true
+            # ReSukiSU 已原生集成完整 SUSFS 支持，无需任何 bridge 补丁：
+            #   - kernel/Kconfig 含 config KSU_SUSFS（在 "KernelSU Hooking Method" choice 内）
+            #     及全部子配置（SUS_PATH/SUS_MOUNT/SUS_KSTAT/SPOOF_UNAME/OPEN_REDIRECT/SUS_MAP 等）
+            #   - kernel/supercall/supercall.c 含 ksu_handle_sys_reboot() 全局函数，
+            #     当 magic2 == SUSFS_MAGIC 时路由到 ksu_handle_susfs_cmd()
+            #   - kernel/supercall/dispatch.c 含 ksu_handle_susfs_cmd()，
+            #     处理全部 CMD_SUSFS_* 命令（ADD_SUS_PATH / SET_UNAME / ADD_SUS_KSTAT 等）
+            #   - kernel/feature/selinux_hide.c 用 __maybe_static 暴露 ksu_selinux_hide_running
+            #   - kernel/runtime/ksud_integration.c 定义 ksu_is_input_hook_enabled (static_key)
+            # bridge 补丁 01-04 是为缺失 SUSFS 的 SukiSU-Ultra main 设计的，对 ReSukiSU 会造成：
+            #   - 01 重复定义 KSU_SUSFS → Kconfig recursive dependency（choice 内已有）
+            #   - 03 修改 supercall.c/dispatch.c 失败（ReSukiSU 结构与补丁预期不同）
+            # 故对 sukisu/resukisu（均重定向到 ReSukiSU）跳过全部 bridge 补丁。
+            # 与 6.6.89 workflow 对齐。
+            echo "ReSukiSU 已原生集成 SUSFS（Kconfig+supercall+dispatch+selinux_hide），跳过 bridge 补丁 01-04..."
           fi
           
       - name: 应用lz4 1.10.0 & zstd 1.5.7补丁
@@ -486,6 +502,12 @@ jobs:
             # 修补 oplus_bsp_midas 行为，避免开机崩溃
             wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/droidspaces_patch/fix_oplus_bsp_midas.patch
             patch -p1 -F 3 < fix_oplus_bsp_midas.patch || true
+            # 修复 oplus_bsp_sched_assist 的 update_ddl_hit_history 越界访问，避免容器环境下不定时重启
+            # 在 kernel/module/main.c 加 hook：模块加载时用 ARM64 trampoline 替换为带边界检查版本。
+            # 补丁针对上游稳定的 kernel/module/main.c（complete_formation/prepare_coming_module），
+            # 用 -F 3 fuzz + || true 兜底，6.6.118 上即使行号微偏移也能应用，最坏跳过不影响构建。
+            wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/ddl_hit_hook.patch
+            patch -p1 -F 3 < ddl_hit_hook.patch || true
             # 应用 NTSync 补丁
             wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/droidspaces_patch/ntsync_base.patch
             wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/droidspaces_patch/ntsync_compat_${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch
@@ -639,7 +661,7 @@ jobs:
           sudo rm -rf /usr/local/lib/android &
           sudo rm -rf /opt/ghc &
           sudo rm -rf /opt/hostedtoolcache/CodeQL &
-          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error gki_defconfig &&
+          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error gki_defconfig
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="$(pwd)/cc-wrapper" LD="$(pwd)/ld-wrapper" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error Image
           
           # 编译后时间劫持二次校验
@@ -651,6 +673,44 @@ jobs:
           ccache -s
           echo "编译后空间:"
           df -h
+
+      - name: 硬性验证 SUSFS 关键 CONFIG 已编入最终 .config
+        if: ${{ inputs.susfs_enable && github.event.inputs.ksu_type != 'none' }}
+        working-directory: kernel_workspace/common
+        run: |
+          set -eu
+          CONFIG=out/.config
+          if [[ ! -s "$CONFIG" ]]; then
+            echo "::error::最终 .config 不存在或为空: $CONFIG"
+            exit 1
+          fi
+          echo "===== 校验最终 .config ====="
+          fail=0
+          # 必须以 =y 编入的 SUSFS 关键项；任一缺失则视为 SUSFS 未真正生效
+          for sym in \
+            CONFIG_KSU_SUSFS \
+            CONFIG_KSU_SUSFS_SPOOF_UNAME \
+            CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            CONFIG_KSU_SUSFS_SUS_PATH \
+            CONFIG_KSU_SUSFS_SUS_MOUNT \
+            CONFIG_KSU_SUSFS_SUS_KSTAT \
+            CONFIG_KSU_SUSFS_OPEN_REDIRECT \
+            CONFIG_KSU_SUSFS_SUS_MAP ; do
+            line=$(grep -E "^${sym}=" "$CONFIG" || true)
+            if [[ "$line" != "${sym}=y" ]]; then
+              echo "::error::${sym} 未以 =y 编入最终 .config（实际值: '${line:-未找到}'）"
+              echo "::error::   → SUSFS patch 可能未完整应用，或 Kconfig 依赖未满足"
+              fail=1
+            else
+              echo "✓ ${sym} = y"
+            fi
+          done
+          if [[ $fail -ne 0 ]]; then
+            echo "::error::SUSFS 关键功能未全部编入内核，构建失败以避免刷入后 ksu_susfs set_uname 报 operation not supported"
+            echo "::error::请检查 patch 应用日志（特别是 50_add_susfs_in_gki-*.patch 的 hunks 是否被拒绝）"
+            exit 1
+          fi
+          echo "✅ 所有 SUSFS 关键 CONFIG 项已编入最终 .config（含 SPOOF_UNAME），可保证刷入后 set_uname 可用"
 
       - name: 保存新的 ccache 缓存
         if: inputs.ccache_update || steps.ccache-restore.outputs.cache-hit != 'true'
